@@ -34,7 +34,7 @@ try:
 except ImportError:
     pass
 
-KNOWN_ACTIONS = ['source', 'login', 'compare', 'gone']
+KNOWN_ACTIONS = ['source', 'login', 'compare', 'gone', 'global']
 # about 30 days worth of new user accounts for enwiki
 DEFAULT_UID_INTERVAL = 100
 
@@ -208,6 +208,52 @@ class QueryRunner():
                 for gone in really_missing:
                     gone_out.write(" ".join(gone) + "\n")
 
+    def check_global_users(self, uids_file, outputpath):
+        '''
+        check the uids in the gone uids file, in batches, to see if any
+        of them are in the global user table, and write out those which
+        are not.
+        '''
+        # create them once; the batch writes will append.
+        with open(outputpath, "w", encoding="utf-8") as output:
+            output.close()
+        with open(outputpath + "_present", "w", encoding="utf-8") as output:
+            output.close()
+
+        with open(uids_file, "r", encoding="utf-8") as uid_input:
+            content = uid_input.read()
+            uid_input.close()
+            entries = content.splitlines()
+            # format:  uid registr_date name
+            rows = [entry.split(' ',2) for entry in entries]
+            # names = [row[2] for row in rows]
+
+        select = "SELECT gu_id, gu_registration, gu_name FROM globaluser WHERE gu_name IN "
+        last = len(rows)
+        for i in range(0,last,50):
+            end = min(i + 50, last)
+            # skip names with '\' but we can manually check these later
+            where = ",".join([self.prep_name_for_query(row[2]) for row in rows[i:end]
+                              if "\\" not in row[2]])
+            query = f"{select} ({where});"
+            found_batch = self.run_query(query)
+            if self.args['dryrun']:
+                continue
+            decoded_batch = [(str(row[0]), row[1].decode('utf-8'), row[2].decode('utf-8')) for row in found_batch]
+            decoded_names = [row[2] for row in decoded_batch]
+
+            # this will include all names with \ in them too, we can live with that
+            gone = [row for row in rows[i:end] if row[2] not in decoded_names]
+            with open(outputpath, "a", encoding="utf-8") as global_out:
+                for global_missing in gone:
+                    global_out.write(" ".join(global_missing) + "\n")
+
+            # also record separately the entries present in the global user table,
+            # the registration dates might be interesting
+            with open(outputpath + "_present", "a", encoding="utf-8") as global_out:
+                for global_present in decoded_batch:
+                    global_out.write(" ".join(global_present) + "\n")
+
 
 def usage(message=None):
     '''
@@ -232,7 +278,7 @@ This script determines the appropriate mariadb hostname for the specified wiki a
 Arguments:
 
      --actions          (-a):  actions to run, separated by a comma
-                               possible choices: source, login, compare, gone
+                               possible choices: source, login, compare, gone, global
                                default: source,login,compare,gone
      --config           (-c):  file containing config settings for this script, see sample
                                ac_config.ini.sample for more information
@@ -505,7 +551,8 @@ def do_main():
 
     mysql_user = settings['main']['dbuser']
 
-    if 'source' in args['actions'] or 'login' in args['actions'] or 'gone' in args['actions']:
+    if ('source' in args['actions'] or 'login' in args['actions'] or
+        'gone' in args['actions'] or 'global' in args['actions']):
         mysql_password = getpass("DB password: ")
 
     if 'source' in args['actions']:
@@ -542,6 +589,15 @@ def do_main():
         if (args['dryrun'] or args['verbose']):
             print("login uids is", args['login_uids'])
 
+    if 'global' in args['actions']:
+        global_dbconn = DBConn('centralauth', mysql_user, mysql_password, settings)
+        global_dbconn.get_conn()
+        if (args['dryrun'] or args['verbose']):
+            print("centralauth db connection established")
+
+        global_queries = QueryRunner(global_dbconn, args)
+        global_queries.init_conn()
+
     date = time.strftime("%Y%m%d", time.gmtime())
     count = int(settings['main']['batchsize'])
 
@@ -549,6 +605,7 @@ def do_main():
     login_output = os.path.join(args['outputdir'], f"login_uids_{date}")
     compare_output = os.path.join(args['outputdir'], f"missing_uids_{date}")
     gone_output = os.path.join(args['outputdir'], f"gone_uids_{date}")
+    global_output = os.path.join(args['outputdir'], f"global_uids_{date}")
 
     if 'source' in args['actions']:
         source_queries.get_user_batches(args['source_uids'], source_output, count)
@@ -561,6 +618,9 @@ def do_main():
 
     if 'gone' in args['actions']:
         login_queries.check_missing_uids(compare_output, gone_output)
+
+    if 'global' in args['actions']:
+        global_queries.check_global_users(gone_output, global_output)
 
 
 if __name__ == '__main__':
