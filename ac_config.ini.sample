@@ -1,0 +1,24 @@
+# sample config file for the account checker script
+
+[main]
+# in this directory, place files named s1.dblist,s2.dblist and so on, each
+# containing the names of wikidbs served from the given db section, one db name
+# per line, with no blank lines or comments
+dblists_dir=/home/mediawiki/dblists
+
+# hostname of the db server, given the section name (s1, s2, etc)
+# if you are doing local tests, make sure that the relevant hostnames
+# are added to your /etc/hosts file and resolve to 127.0.0.1 and ::1
+hostname_templ={section}-analytics-replica.scripts.test
+
+# port to connect to mysql/mariadb database server
+# if left blank, the port will be 3306 + section number, so
+# for example, for s4, the port will be 3310, since that is
+# how WMF analytics db server port assignments are done
+port=3306
+
+# how many rows to fetch at once from the user table
+batchsize=3
+
+# user name for mysql/mariadb
+dbuser=root
